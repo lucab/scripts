@@ -108,7 +108,7 @@ fi
 . "${BUILD_LIBRARY_DIR}/prod_image_util.sh" || exit 1
 . "${BUILD_LIBRARY_DIR}/dev_container_util.sh" || exit 1
 . "${BUILD_LIBRARY_DIR}/test_image_content.sh" || exit 1
-. "${BUILD_LIBRARY_DIR}/torcx_manifest.sh" || exit 1
+. "${BUILD_LIBRARY_DIR}/torcx_remote.sh" || exit 1
 . "${BUILD_LIBRARY_DIR}/vm_image_util.sh" || exit 1
 
 PROD_IMAGE=0

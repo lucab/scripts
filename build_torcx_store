@@ -54,7 +54,8 @@ check_gsutil_opts
 . "${BUILD_LIBRARY_DIR}/toolchain_util.sh" || exit 1
 . "${BUILD_LIBRARY_DIR}/board_options.sh" || exit 1
 . "${BUILD_LIBRARY_DIR}/build_image_util.sh" || exit 1
-. "${BUILD_LIBRARY_DIR}/torcx_manifest.sh" || exit 1
+. "${BUILD_LIBRARY_DIR}/tectonic_torcx_manifest.sh" || exit 1
+. "${BUILD_LIBRARY_DIR}/torcx_remote.sh" || exit 1
 
 TORCX_CAS_ROOT="${FLAGS_output_root}/pkgs/${BOARD}"
 
@@ -189,8 +190,33 @@ function torcx_package() {
                 sudo mv "${tmproot}/usr/share" "${tmppkgroot}/usr/"
         fi
 
-        tmpfile="${BUILD_DIR}/${name}:${version}.torcx.tgz"
-        tar --force-local -C "${tmppkgroot}" -czf "${tmpfile}" .
+        torcx_create_image "${name}" "${version}" "${source_pkg}" "${tmppkgroot}" "squashfs" "${type}" "ondisk" "${manifest_path}"
+        # tgz is still produced for tectonic-torcx compatibility
+        torcx_create_image "${name}" "${version}" "${source_pkg}" "${tmppkgroot}" "tgz" "${type}" "remote" "${manifest_path}"
+}
+
+function torcx_create_image() {
+        local name="${1}"
+        local version="${2}"
+        local source_pkg="${3}"
+        local tmppkgroot="${4}"
+        local format="${5}"
+        local type="${6}"
+        # XXX
+        local location="${7}"
+        local manifest_path="${8}"
+        local pkg_cas_file pkg_cas_root tmpfile sha512sum update_default digest
+        local pkg_locations=()
+
+        tmpfile="${BUILD_DIR}/${name}:${version}.torcx.${format}"
+        if [[ "${format}" == "tgz" ]]; then
+                tar --force-local -C "${tmppkgroot}" -czf "${tmpfile}" .
+        elif [[ "${format}" == "squashfs" ]]; then
+                mksquashfs "${tmppkgroot}" "${tmpfile}"
+        else
+                die "unrecognized format: ${format}"
+        fi
+
         sha512sum=$(sha512sum "${tmpfile}" | awk '{print $1}')
 
         # TODO(euank): this opaque digest, if it were reproducible, could save
@@ -201,26 +227,26 @@ function torcx_package() {
         # *MUST* ensure that a given pair of (digest, sha512sum) referenced in
         # a previous torcx package remains correct.
         # Because this code, as written, clobbers existing things with the same
-        # digest (but the sha512sum of the .torcx.tgz can differ, e.g. due to ctime)
+        # digest (but the sha512sum of the archive can differ, e.g. due to ctime)
         # that property doesn't hold.
         # To switch this back to a reprodicble digest, we *must* never clobber
         # existing objects (and thus re-use their sha512sum here).
         digest="${sha512sum}"
 
         pkg_cas_root="${TORCX_CAS_ROOT}/${name}/${digest}"
-        pkg_cas_file="${pkg_cas_root}/${name}:${version}.torcx.tgz"
+        pkg_cas_file="${pkg_cas_root}/${name}:${version}.torcx.${format}"
         mkdir -p "${pkg_cas_root}"
         mv "${tmpfile}" "${pkg_cas_file}"
 
         update_default=false
         if [[ "${type}" == "default" ]]; then
                 update_default=true
-                pkg_locations+=("/usr/share/torcx/store/${name}:${version}.torcx.tgz")
+                pkg_locations+=("/usr/share/torcx/store/${name}:${version}.torcx.${format}")
         fi
         if [[ "${FLAGS_upload}" -eq ${FLAGS_TRUE} ]]; then
-                pkg_locations+=("$(download_tectonic_torcx_url "pkgs/${BOARD}/${name}/${digest}/${name}:${version}.torcx.tgz")")
+                pkg_locations+=("$(download_tectonic_torcx_url "pkgs/${BOARD}/${name}/${digest}/${name}:${version}.torcx.${format}")")
         fi
-        torcx_manifest::add_pkg "${manifest_path}" \
+        torcx_remote::add_pkg "${manifest_path}" \
             "${name}" \
             "${version}" \
             "sha512-${sha512sum}" \
@@ -230,6 +256,78 @@ function torcx_package() {
             "${pkg_locations[@]}"
 
         trap - EXIT
+}
+
+finalize_tectonic_torcx_assets() {
+    local tectonic_torcx_manifest_path
+    tectonic_torcx_manifest_path="${BUILD_DIR}/torcx_manifest.json"
+    tectonic_torcx_manifest::create_empty "${tectonic_torcx_manifest_path}"
+    for pkg in "${@:-${DEFAULT_IMAGES[@]}}" ; do torcx_package "${pkg#=}" "${tectonic_torcx_manifest_path}" "default" ; done
+    for pkg in "${EXTRA_IMAGES[@]}" ; do torcx_package "${pkg#=}" "${tectonic_torcx_manifest_path}" "extra" ; done
+    
+    set_build_symlinks latest "${FLAGS_group}-latest"
+    
+    # Upload the pkgs referenced by this manifest
+    for pkg in $(tectonic_torcx_manifest::get_pkg_names "${tectonic_torcx_manifest_path}"); do
+            for digest in $(tectonic_torcx_manifest::get_digests "${tectonic_torcx_manifest_path}" "${pkg}"); do
+                # no need to sign; the manifest includes their shasum and is signed.
+                upload_files \
+                    'torcx pkg' \
+                    "${TORCX_UPLOAD_ROOT}/pkgs/${BOARD}/${pkg}/${digest}" \
+                    "" \
+                    "${TORCX_CAS_ROOT}/${pkg}/${digest}"/*.torcx.tgz
+          done
+    done
+    
+    # Upload the manifest
+    # Note: the manifest is uploaded to 'UPLOAD_ROOT' rather than
+    # 'TORCX_UPLOAD_ROOT'.
+    # For non-release builds, those two locations will be the same, so it usually
+    # won't matter.
+    # However, for release builds, torcx packages may be uploaded directly to their
+    # final location, while the manifest still has to go through build bucket in
+    # order to get signed.
+    sign_and_upload_files \
+        'torcx manifest' \
+        "${UPLOAD_ROOT}/torcx/manifests/${BOARD}/${COREOS_VERSION}" \
+        "" \
+        "${tectonic_torcx_manifest_path}"
+}
+
+finalize_torcx_remote_assets() {
+    local torcx_remote_contents_path
+    torcx_remote_contents_path="${BUILD_DIR}/torcx_remote_contents.json"
+    torcx_remote::create_empty "${torcx_remote_contents_path}"
+    for pkg in "${@:-${DEFAULT_IMAGES[@]}}" ; do torcx_package "${pkg#=}" "${torcx_remote_contents_path}" "default" ; done
+    for pkg in "${EXTRA_IMAGES[@]}" ; do torcx_package "${pkg#=}" "${torcx_remote_contents_path}" "extra" ; done
+    
+    set_build_symlinks latest "${FLAGS_group}-latest"
+    
+    # Upload the pkgs referenced by this manifest
+    for pkg in $(torcx_remote::get_pkg_names "${torcx_remote_contents_path}"); do
+            for digest in $(torcx_remote::get_digests "${torcx_remote_contents_path}" "${pkg}"); do
+                # no need to sign; the manifest includes their shasum and is signed.
+                upload_files \
+                    'torcx pkg' \
+                    "${TORCX_UPLOAD_ROOT}/pkgs/${BOARD}/${pkg}/${digest}" \
+                    "" \
+                    "${TORCX_CAS_ROOT}/${pkg}/${digest}"/*.torcx.*
+          done
+    done
+    
+    # Upload the manifest
+    # Note: the manifest is uploaded to 'UPLOAD_ROOT' rather than
+    # 'TORCX_UPLOAD_ROOT'.
+    # For non-release builds, those two locations will be the same, so it usually
+    # won't matter.
+    # However, for release builds, torcx packages may be uploaded directly to their
+    # final location, while the manifest still has to go through build bucket in
+    # order to get signed.
+    sign_and_upload_files \
+        'torcx manifest' \
+        "${UPLOAD_ROOT}/torcx/manifests/${BOARD}/${COREOS_VERSION}" \
+        "" \
+        "${torcx_remote_contents_path}"
 }
 
 # This list defines every torcx image that goes into the vendor store for the
@@ -248,37 +346,7 @@ EXTRA_IMAGES=(
 )
 
 mkdir -p "${BUILD_DIR}"
-manifest_path="${BUILD_DIR}/torcx_manifest.json"
-torcx_manifest::create_empty "${manifest_path}"
-for pkg in "${@:-${DEFAULT_IMAGES[@]}}" ; do torcx_package "${pkg#=}" "${manifest_path}" "default" ; done
-for pkg in "${EXTRA_IMAGES[@]}" ; do torcx_package "${pkg#=}" "${manifest_path}" "extra" ; done
-
-set_build_symlinks latest "${FLAGS_group}-latest"
-
-# Upload the pkgs referenced by this manifest
-for pkg in $(torcx_manifest::get_pkg_names "${manifest_path}"); do
-        for digest in $(torcx_manifest::get_digests "${manifest_path}" "${pkg}"); do
-            # no need to sign; the manifest includes their shasum and is signed.
-            upload_files \
-                'torcx pkg' \
-                "${TORCX_UPLOAD_ROOT}/pkgs/${BOARD}/${pkg}/${digest}" \
-                "" \
-                "${TORCX_CAS_ROOT}/${pkg}/${digest}"/*.torcx.tgz
-      done
-done
-
-# Upload the manifest
-# Note: the manifest is uploaded to 'UPLOAD_ROOT' rather than
-# 'TORCX_UPLOAD_ROOT'.
-# For non-release builds, those two locations will be the same, so it usually
-# won't matter.
-# However, for release builds, torcx packages may be uploaded directly to their
-# final location, while the manifest still has to go through build bucket in
-# order to get signed.
-sign_and_upload_files \
-    'torcx manifest' \
-    "${UPLOAD_ROOT}/torcx/manifests/${BOARD}/${COREOS_VERSION}" \
-    "" \
-    "${manifest_path}"
+finalize_tectonic_torcx_assets
+finalize_torcx_remote_assets
 
 # vim: tabstop=8 softtabstop=4 shiftwidth=8 expandtab

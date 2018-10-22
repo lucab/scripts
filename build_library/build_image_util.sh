@@ -258,7 +258,7 @@ image_packages() {
 
     # Include source packages of all torcx images installed on disk.
     [ -z "${FLAGS_torcx_manifest}" ] ||
-    torcx_manifest::sources_on_disk "${FLAGS_torcx_manifest}" |
+    torcx_remote::sources_on_disk "${FLAGS_torcx_manifest}" |
     while read pkg ; do query_available_package "${pkg}" ; done
 }
 
@@ -428,12 +428,12 @@ finish_image() {
 
   # Copy in packages from the torcx store that are marked as being on disk
   if [ -n "${FLAGS_torcx_manifest}" ]; then
-    for pkg in $(torcx_manifest::get_pkg_names "${FLAGS_torcx_manifest}"); do
-      local default_version="$(torcx_manifest::default_version "${FLAGS_torcx_manifest}" "${pkg}")"
-      for version in $(torcx_manifest::get_versions "${FLAGS_torcx_manifest}" "${pkg}"); do
-        local on_disk_path="$(torcx_manifest::local_store_path "${FLAGS_torcx_manifest}" "${pkg}" "${version}")"
+    for pkg in $(torcx_remote::get_pkg_names "${FLAGS_torcx_manifest}"); do
+      local default_version="$(torcx_remote::default_version "${FLAGS_torcx_manifest}" "${pkg}")"
+      for version in $(torcx_remote::get_versions "${FLAGS_torcx_manifest}" "${pkg}"); do
+        local on_disk_path="$(torcx_remote::local_store_path "${FLAGS_torcx_manifest}" "${pkg}" "${version}")"
         if [[ -n "${on_disk_path}" ]]; then
-          local casDigest="$(torcx_manifest::get_digest "${FLAGS_torcx_manifest}" "${pkg}" "${version}")"
+          local casDigest="$(torcx_remote::get_digest "${FLAGS_torcx_manifest}" "${pkg}" "${version}")"
           sudo cp "${FLAGS_torcx_root}/pkgs/${BOARD}/${pkg}/${casDigest}/${pkg}:${version}.torcx.tgz" \
             "${root_fs_dir}${on_disk_path}"
 

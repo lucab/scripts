@@ -3,11 +3,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# torcx_manifest.sh contains helper functions for creating, editing, and
+# tectonic_torcx_manifest.sh contains helper functions for creating, editing, and
 # reading torcx manifest files.
 
 # create_empty creates an empty torcx manfiest at the given path.
-function torcx_manifest::create_empty() {
+function tectonic_torcx_manifest::create_empty() {
   local path="${1}"
   jq '.' > "${path}" <<EOF
 {
@@ -23,7 +23,7 @@ EOF
 # path.
 # That manifest will be edited to include this version, with the associated
 # package of the given name being created as well if necessary.
-function torcx_manifest::add_pkg() {
+function tectonic_torcx_manifest::add_pkg() {
   path="${1}"; shift
   name="${1}"; shift
   version="${1}"; shift
@@ -83,8 +83,8 @@ EOF
 # may have one or more versions associated with it.
 #
 # Example:
-#     pkg_name_arr=($(torcx_manifest::get_pkg_names "torcx_manifest.json"))
-function torcx_manifest::get_pkg_names() {
+#     pkg_name_arr=($(tectonic_torcx_manifest::get_pkg_names "torcx_manifest.json"))
+function tectonic_torcx_manifest::get_pkg_names() {
   local file="${1}"
   jq -r '.value.packages[].name' < "${file}"
 }
@@ -92,7 +92,7 @@ function torcx_manifest::get_pkg_names() {
 # local_store_path returns the in-container-linux store path a given package +
 # version combination should exist at. It returns the empty string if the
 # package shouldn't exist on disk.
-function torcx_manifest::local_store_path() {
+function tectonic_torcx_manifest::local_store_path() {
   local file="${1}"
   local name="${2}"
   local version="${3}"
@@ -100,7 +100,7 @@ function torcx_manifest::local_store_path() {
 }
 
 # get_digest returns the cas digest for a given package version
-function torcx_manifest::get_digest() {
+function tectonic_torcx_manifest::get_digest() {
   local file="${1}"
   local name="${2}"
   local version="${3}"
@@ -108,28 +108,28 @@ function torcx_manifest::get_digest() {
 }
 
 # get_digests returns the list of digests for a given package. 
-function torcx_manifest::get_digests() {
+function tectonic_torcx_manifest::get_digests() {
   local file="${1}"
   local name="${2}"
   jq -r ".value.packages[] | select(.name == \"${name}\").versions[].casDigest" < "${file}"
 }
 
 # get_versions returns the list of versions for a given package. 
-function torcx_manifest::get_versions() {
+function tectonic_torcx_manifest::get_versions() {
   local file="${1}"
   local name="${2}"
   jq -r ".value.packages[] | select(.name == \"${name}\").versions[].version" < "${file}"
 }
 
 # default_version returns the default version for a given package, or an empty string if there isn't one.
-function torcx_manifest::default_version() {
+function tectonic_torcx_manifest::default_version() {
   local file="${1}"
   local name="${2}"
   jq -r ".value.packages[] | select(.name == \"${name}\").defaultVersion" < "${file}"
 }
 
 # sources_on_disk returns the list of source packages of all torcx images installed on disk
-function torcx_manifest::sources_on_disk() {
+function tectonic_torcx_manifest::sources_on_disk() {
   local file="${1}"
   jq -r ".value.packages[].versions[] | select(.locations[].path).sourcePackage" < "${file}"
 }
